@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.25;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract BridgeGatewayBSC is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -32,6 +32,7 @@ contract BridgeGatewayBSC is AccessControl, Pausable, ReentrancyGuard {
     address public treasury;    // nơi nhận phí
     uint256 public minPerTx;    // 0 = không giới hạn
     uint256 public maxPerTx;    // 0 = không giới hạn
+    uint256 public minFee;      // phí tối thiểu theo đơn vị token (wei)
 
     // ===== Events =====
     event Locked(
@@ -53,6 +54,7 @@ contract BridgeGatewayBSC is AccessControl, Pausable, ReentrancyGuard {
 
     event FeeUpdated(uint16 feeBps, address treasury);
     event LimitsUpdated(uint256 minPerTx, uint256 maxPerTx);
+    event MinFeeUpdated(uint256 minFee);
 
     // ===== Constructor =====
     /**
@@ -119,9 +121,17 @@ contract BridgeGatewayBSC is AccessControl, Pausable, ReentrancyGuard {
 
         uint256 out = amount;
         uint256 fee;
-        if (feeBps > 0) {
-            fee = (amount * feeBps) / MAX_BPS;
+        if (feeBps > 0 || minFee > 0) {
+            uint256 percentFee = (amount * feeBps) / MAX_BPS;
+            fee = percentFee;
+
+            if (minFee > 0 && fee < minFee) {
+                fee = minFee;
+                require(fee <= amount, "fee>amount"); // an toàn
+            }
+
             out = amount - fee;
+
             if (fee > 0) {
                 require(treasury != address(0), "treasury=0");
                 token.safeTransfer(treasury, fee);
@@ -140,11 +150,18 @@ contract BridgeGatewayBSC is AccessControl, Pausable, ReentrancyGuard {
     function unpause() external onlyRole(PAUSER_ROLE) { _unpause(); }
 
     /**
-     * @notice Cập nhật phí & treasury
+     * @notice Cập nhật fee theo % (bps) và treasury.
+     *         feeBps = 30 => 0.3%
      */
-    function setFee(uint16 _feeBps, address _treasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setFee(uint16 _feeBps, address _treasury)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         require(_feeBps <= MAX_BPS, "fee>MAX_BPS");
-        if (_feeBps > 0) require(_treasury != address(0), "treasury=0");
+        // Nếu có thu fee (theo % hoặc minFee), treasury phải khác 0
+        if (_feeBps > 0 || minFee > 0) {
+            require(_treasury != address(0), "treasury=0");
+        }
         feeBps  = _feeBps;
         treasury = _treasury;
         emit FeeUpdated(_feeBps, _treasury);
@@ -153,7 +170,10 @@ contract BridgeGatewayBSC is AccessControl, Pausable, ReentrancyGuard {
     /**
      * @notice Cập nhật hạn mức mỗi lần lock (0 = bỏ giới hạn)
      */
-    function setLimits(uint256 _minPerTx, uint256 _maxPerTx) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setLimits(uint256 _minPerTx, uint256 _maxPerTx)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         require(_maxPerTx == 0 || _maxPerTx >= _minPerTx, "max<min");
         minPerTx = _minPerTx;
         maxPerTx = _maxPerTx;
@@ -161,16 +181,39 @@ contract BridgeGatewayBSC is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /**
+     * @notice Cập nhật minFee theo đơn vị token (wei).
+     *         Admin sẽ tự tính 0.1 USD ≈ X RYF và set giá trị X.
+     */
+    function setMinFee(uint256 _minFee)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        minFee = _minFee;
+        // nếu có thu fee (theo % hoặc minFee), treasury phải khác 0
+        if (feeBps > 0 || _minFee > 0) {
+            require(treasury != address(0), "treasury=0");
+        }
+        emit MinFeeUpdated(_minFee);
+    }
+
+    /**
      * @notice Thu hồi token lạc (không phải token bridge).
      */
-    function sweep(address erc20, uint256 amount, address to) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function sweep(address erc20, uint256 amount, address to)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         require(to != address(0), "to=0");
         require(erc20 != address(token), "no-bridge-token");
         IERC20(erc20).safeTransfer(to, amount);
     }
 
     // ===== Views =====
-    function isProcessed(uint256 _srcChainId, bytes32 _srcTxHash) external view returns (bool) {
+    function isProcessed(uint256 _srcChainId, bytes32 _srcTxHash)
+        external
+        view
+        returns (bool)
+    {
         return processed[_srcChainId][_srcTxHash];
     }
 }

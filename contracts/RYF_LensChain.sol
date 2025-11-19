@@ -2,10 +2,10 @@
 pragma solidity 0.8.25;
 
 /**
- * Rise_Your_Future_Token (RYF)
- * - Tổng cung khởi tạo: 1,000,000 RYF
- * - Chỉ ADMIN (DEFAULT_ADMIN_ROLE) mới được mint thêm.
- * - Có Burn, Pause, Blacklist, và Recover token gửi nhầm.
+ * Testnet_Rise_Your_Future (tRYF) — Wrapped token cho Lens Chain (testnet)
+ * - Mintable/Burnable: mint CHỈ bởi MINTER_ROLE (BridgeMinterLens), burn mở cho user.
+ * - Pausable + Blacklist.
+ * - Initial supply = 0 (peg 1:1 theo pool bên BSC).
  */
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -15,17 +15,18 @@ import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-contract Ruby_Token is ERC20, ERC20Burnable, AccessControl, Pausable {
+contract Rise_Your_Future_Token is ERC20, ERC20Burnable, AccessControl, Pausable {
     using SafeERC20 for IERC20;
 
     // =============== Roles ===============
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     // =============== Blacklist ===============
     mapping(address => bool) public blacklisted;
     event BlacklistUpdated(address indexed account, bool isBlacklisted);
 
-    // =============== Events ===============
+    // =============== Events (quản trị) ===============
     event RecoveredForeignERC20(address indexed token, address indexed to, uint256 amount);
 
     // =============== Errors ===============
@@ -39,12 +40,12 @@ contract Ruby_Token is ERC20, ERC20Burnable, AccessControl, Pausable {
     ) ERC20(name_, symbol_) {
         require(admin_ != address(0), "admin=0");
 
-        // setup roles
+        // roles setup
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(PAUSER_ROLE, admin_);
+        // MINTER_ROLE sẽ được grant cho BridgeMinterLens sau khi deploy
 
-        // Mint 1,000,000 token (với 18 decimals)
-        _mint(admin_, 1_000_000 * 10 ** decimals());
+        // initial supply = 0 (wrapped token)
     }
 
     // =============== Metadata ===============
@@ -52,7 +53,7 @@ contract Ruby_Token is ERC20, ERC20Burnable, AccessControl, Pausable {
         return 18;
     }
 
-    // =============== Admin Control ===============
+    // =============== Admin ===============
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
@@ -61,10 +62,7 @@ contract Ruby_Token is ERC20, ERC20Burnable, AccessControl, Pausable {
         _unpause();
     }
 
-    function setBlacklist(address account, bool isBlacklisted)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
+    function setBlacklist(address account, bool isBlacklisted) external onlyRole(DEFAULT_ADMIN_ROLE) {
         blacklisted[account] = isBlacklisted;
         emit BlacklistUpdated(account, isBlacklisted);
     }
@@ -82,23 +80,21 @@ contract Ruby_Token is ERC20, ERC20Burnable, AccessControl, Pausable {
         emit RecoveredForeignERC20(tokenAddress, to, amount);
     }
 
-    // =============== Mint (chỉ admin) ===============
-    function mint(address to, uint256 amount)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-        whenNotPaused
-    {
+    // =============== Mint (chỉ BridgeMinterLens) ===============
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) whenNotPaused {
         _mint(to, amount);
     }
 
-    // =============== Transfer Hook ===============
+    // =============== Core Transfer Hooks ===============
     function _update(address from, address to, uint256 amount)
         internal
         override
         whenNotPaused
     {
+        // chặn chuyển nếu bị blacklist
         if (from != address(0) && blacklisted[from]) revert Blacklisted(from, to);
         if (to != address(0) && blacklisted[to]) revert Blacklisted(from, to);
+
         super._update(from, to, amount);
     }
 }
