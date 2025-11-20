@@ -39,8 +39,8 @@ async function main() {
   const TRYF_BSC = getAddress(process.env.RYF_BSC!);
   const GATEWAY_BSC = getAddress(process.env.BRIDGE_GATEWAY_BSC!);
 
-  const LENS_RPC = process.env.LENS_RPC!;
-  const BSC_RPC = process.env.BSC_RPC_HTTP!;
+  const LENS_RPC = process.env.RPC_LENS_MAINNET || "https://rpc.lens.xyz";
+  const BSC_RPC = process.env.RPC_BSC_MAINNET || "https://bsc-dataseed.binance.org";
 
   if (!ADMIN_PK || !RELAYER || !TRYF_LENS || !MINTER_LENS || !GATEWAY_BSC) {
     throw new Error("❌ Missing env variables. Check .env file.");
@@ -63,8 +63,8 @@ async function main() {
     const provider = new JsonRpcProvider(LENS_RPC);
     const wallet = new Wallet(ADMIN_PK, provider);
 
-    // Load tRYF_Lens ABI
-    const tokenArtifact = await hre.artifacts.readArtifact("tRYF_Lens");
+    // Load Rise_Your_Future_Token ABI
+    const tokenArtifact = await hre.artifacts.readArtifact("Rise_Your_Future_Token");
     const tokenContract = new Contract(TRYF_LENS, tokenArtifact.abi, wallet);
 
     await grantRoleIfNeeded(
